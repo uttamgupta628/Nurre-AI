@@ -1,0 +1,550 @@
+// app/assessments/[type]/page.tsx
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { useRouter, useParams } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AssessmentQuestionComponent } from "@/components/assessments/assessment-question";
+import { AssessmentResults } from "@/components/assessments/assessment-results";
+import { SafetyInterstitialModal } from "@/components/assessments/safety-interstitial-modal";
+import { useAssessmentStore } from "@/store/assessment-store";
+import { useUserStore } from "@/store/user-store";
+import { createClient } from "@/lib/supabase/client";
+import { AssessmentService } from "@/lib/services/assessment-service";
+import {
+  ASSESSMENT_CONFIG,
+  isValidAssessmentType,
+} from "@/lib/types/assessment";
+import type { Assessment, AssessmentResult } from "@/lib/types/assessment";
+import { ArrowLeft, AlertCircle, Clock, Save, WifiOff } from "lucide-react";
+
+export default function AssessmentFlowPage() {
+  const router = useRouter();
+  const params = useParams();
+  const supabase = createClient();
+  const assessmentService = new AssessmentService();
+
+  const {
+    currentAssessment,
+    answerQuestion,
+    nextQuestion,
+    previousQuestion,
+    saveProgress,
+    completeAssessment,
+    clearCurrentAssessment,
+  } = useAssessmentStore();
+
+  const [loading, setLoading] = useState(true);
+  const [completing, setCompleting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<AssessmentResult | null>(null);
+  const [showResult, setShowResult] = useState(false);
+  const [isOfflineResult, setIsOfflineResult] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(
+    null,
+  );
+  const [showSafetyInterstitial, setShowSafetyInterstitial] = useState(false);
+  const [pendingNextQuestion, setPendingNextQuestion] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const assessmentRef = useRef<Assessment | null>(null);
+  const assessmentType = params.type as string;
+
+  useEffect(() => {
+    if (!isValidAssessmentType(assessmentType)) {
+      router.push("/profile?tab=assessments");
+      return;
+    }
+    initializeAssessment();
+  }, [assessmentType]);
+
+  useEffect(() => {
+    if (currentAssessment?.assessment) {
+      assessmentRef.current = currentAssessment.assessment;
+    }
+  }, [currentAssessment]);
+
+  useEffect(() => {
+    if (currentAssessment && !currentAssessment.isComplete) {
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      const timer = setTimeout(async () => {
+        setSaving(true);
+        await saveProgress();
+        setSaving(false);
+      }, 5000);
+      setAutoSaveTimer(timer);
+    }
+    return () => {
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    };
+  }, [currentAssessment?.responses]);
+
+  const initializeAssessment = async () => {
+    setLoading(true);
+    setSubmitError(null);
+
+    try {
+      // 1. Get user from store first to avoid unnecessary network calls
+      let currentUser = useUserStore.getState().user;
+      
+      if (!currentUser) {
+        // Fallback to fetch with a timeout so it never hangs indefinitely
+        const fetchUserPromise = supabase.auth.getUser().then(({ data }) => data.user);
+        currentUser = await Promise.race([
+          fetchUserPromise,
+          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Auth Timeout")), 5000))
+        ]).catch(() => null);
+      }
+
+      if (!currentUser) {
+        router.push("/login");
+        return;
+      }
+      setUser(currentUser);
+
+      // 2. Fast-path: If we ALREADY have the right assessment loaded in the store
+      // (because the user just clicked "Start Assessment" and it was set synchronously),
+      // we can skip all further initialization and render immediately.
+      if (currentAssessment && currentAssessment.assessment.type === assessmentType) {
+        return;
+      }
+
+      // 3. Otherwise, fetch the assessment details (with timeout)
+      const fetchAssessmentPromise = assessmentService.getAssessment(assessmentType as any);
+      const assessment = await Promise.race([
+        fetchAssessmentPromise,
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Assessment Timeout")), 5000))
+      ]).catch((err) => {
+        console.error("Timeout fetching assessment:", err);
+        return null;
+      });
+
+      if (!assessment) {
+        router.push("/profile?tab=assessments");
+        return;
+      }
+
+      // 4. Check Supabase for an in-progress attempt (also with a short timeout)
+      // If it fails or times out, we just fallback to a fresh start
+      const progress = await Promise.race([
+        assessmentService.getOrCreateProgress(currentUser.id, assessment.id),
+        new Promise<any>((resolve) => setTimeout(() => resolve(null), 3000))
+      ]).catch(() => null);
+
+      const hasPartialProgress =
+        progress && Object.keys(progress.responses).length > 0;
+
+      if (hasPartialProgress) {
+        // Resume from Supabase progress
+        useAssessmentStore.setState({
+          currentAssessment: {
+            assessment,
+            currentQuestionIndex: progress.current_question_index,
+            responses: progress.responses as Record<number, number>,
+            startTime: new Date(progress.started_at).getTime(),
+            isComplete: false,
+          },
+        });
+      } else {
+        // Fresh start — clears any stale localStorage
+        useAssessmentStore.getState().startAssessment(assessment, false);
+      }
+    } catch (error) {
+      console.error("Error initializing assessment:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAnswer = (value: number) => {
+    if (!currentAssessment) return;
+
+    const currentQuestion =
+      currentAssessment.assessment.questions[
+        currentAssessment.currentQuestionIndex
+      ];
+    answerQuestion(currentQuestion.id, value);
+
+    if (
+      currentAssessment.assessment.type === "phq9" &&
+      currentQuestion.id === 9 &&
+      value > 0
+    ) {
+      setShowSafetyInterstitial(true);
+      setPendingNextQuestion(true);
+      logSafetyEvent();
+    }
+  };
+
+  const logSafetyEvent = async () => {
+    if (!user) return;
+    try {
+      await supabase.from("events").insert({
+        user_id: user.id,
+        type: "assessment_safety_interstitial",
+        data: {
+          assessment_type: "phq9",
+          question_id: 9,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      console.error("Failed to log safety event:", error);
+    }
+  };
+
+  const handleNext = async () => {
+    if (!currentAssessment) return;
+    if (pendingNextQuestion) return;
+
+    const isLastQuestion =
+      currentAssessment.currentQuestionIndex ===
+      currentAssessment.assessment.questions.length - 1;
+
+    if (currentAssessment.isComplete || isLastQuestion) {
+      // ── Snapshot ALL data we need BEFORE any state mutations or async work ──
+      // React closures + Zustand state can diverge on slow/flaky devices.
+      // By capturing everything here we guarantee we always have what we need
+      // to render a result, even if the store gets cleared mid-flight.
+      const snapshotAssessment =
+        assessmentRef.current ?? currentAssessment.assessment;
+      const snapshotResponses = { ...currentAssessment.responses };
+      const snapshotStartTime = currentAssessment.startTime;
+      const snapshotUser = user; // from page-level useState
+
+      if (!currentAssessment.isComplete) {
+        useAssessmentStore.getState().nextQuestion();
+      }
+
+      setSubmitError(null);
+      setCompleting(true);
+      try {
+        const response = await useAssessmentStore.getState().completeAssessment();
+
+        // Determine the final response to render.
+        // completeAssessment() can still return null when its internal guards
+        // fire (e.g. store already cleared, userStore not yet hydrated).
+        // In that case we compute the result right here using the snapshot data
+        // captured above — this is the definitive last-resort guarantee.
+        let finalResponse = response;
+        let isOffline = !!(response as any)?._offline;
+
+        if (!finalResponse && snapshotAssessment && snapshotUser &&
+            Object.keys(snapshotResponses).length > 0) {
+          console.warn(
+            "[Assessment] completeAssessment returned null — using page-level snapshot fallback.",
+          );
+          finalResponse = assessmentService.completeAssessmentOffline(
+            snapshotUser.id,
+            snapshotAssessment,
+            snapshotResponses,
+            snapshotStartTime,
+          );
+          isOffline = true;
+          // Also add to history and clear progress so the store stays consistent
+          useAssessmentStore.setState((prev) => ({
+            assessmentHistory: [finalResponse!, ...prev.assessmentHistory],
+            currentAssessment: null,
+          }));
+          try {
+            const progressKey = `assessment-progress:${snapshotUser.id}:${snapshotAssessment.type}`;
+            localStorage.removeItem(progressKey);
+          } catch { /* best-effort */ }
+        }
+
+        if (finalResponse && snapshotAssessment) {
+          setIsOfflineResult(isOffline);
+
+          let assessmentResult: AssessmentResult;
+          try {
+            assessmentResult = await assessmentService.getAssessmentResult(
+              snapshotAssessment,
+              finalResponse,
+            );
+          } catch {
+            // Network call to enrich result also failed — build locally
+            assessmentResult = {
+              assessment: snapshotAssessment,
+              response: finalResponse,
+              interpretation: assessmentService.getInterpretation(
+                snapshotAssessment,
+                finalResponse.scores,
+              ),
+              subscale_interpretations: assessmentService.getSubscaleInterpretations(
+                snapshotAssessment,
+                finalResponse.scores,
+              ),
+              comparison_to_previous: undefined,
+            };
+          }
+
+          setResult(assessmentResult);
+          setShowResult(true);
+        } else {
+          // Absolute last line of defence — should be unreachable now.
+          setSubmitError(
+            "Unable to generate results. Please reload and try again.",
+          );
+        }
+      } catch (error) {
+        // Even the outer try/catch: try offline one more time before giving up
+        console.error("[Assessment] Unexpected error in handleNext:", error);
+        if (snapshotAssessment && snapshotUser && Object.keys(snapshotResponses).length > 0) {
+          try {
+            const emergencyResponse = assessmentService.completeAssessmentOffline(
+              snapshotUser.id,
+              snapshotAssessment,
+              snapshotResponses,
+              snapshotStartTime,
+            );
+            const emergencyResult: AssessmentResult = {
+              assessment: snapshotAssessment,
+              response: emergencyResponse,
+              interpretation: assessmentService.getInterpretation(
+                snapshotAssessment,
+                emergencyResponse.scores,
+              ),
+              subscale_interpretations: assessmentService.getSubscaleInterpretations(
+                snapshotAssessment,
+                emergencyResponse.scores,
+              ),
+              comparison_to_previous: undefined,
+            };
+            setIsOfflineResult(true);
+            setResult(emergencyResult);
+            setShowResult(true);
+            return; // Skip the setSubmitError below
+          } catch (emergencyErr) {
+            console.error("[Assessment] Emergency fallback also failed:", emergencyErr);
+          }
+        }
+        setSubmitError("An unexpected error occurred. Please try again.");
+      } finally {
+        setCompleting(false);
+      }
+    } else {
+      setSubmitError(null);
+      nextQuestion();
+    }
+  };
+
+  const handleSafetyInterstitialContinue = () => {
+    setShowSafetyInterstitial(false);
+    setPendingNextQuestion(false);
+    if (currentAssessment && !currentAssessment.isComplete) {
+      nextQuestion();
+    }
+  };
+
+  const handleSafetyInterstitialStop = async () => {
+    if (currentAssessment && !currentAssessment.isComplete) {
+      setSaving(true);
+      await saveProgress();
+      setSaving(false);
+    }
+    setShowSafetyInterstitial(false);
+    setPendingNextQuestion(false);
+    clearCurrentAssessment();
+    router.push("/assessments?showCrisis=true");
+  };
+
+  const handlePrevious = () => previousQuestion();
+
+  const handleExit = async () => {
+    if (currentAssessment && !currentAssessment.isComplete) {
+      setSaving(true);
+      await saveProgress();
+      setSaving(false);
+    }
+    clearCurrentAssessment();
+    router.push("/profile?tab=assessments");
+  };
+
+  const handleRetake = () => {
+    if (assessmentRef.current) {
+      // resume=false → fresh start, clears stale localStorage
+      useAssessmentStore
+        .getState()
+        .startAssessment(assessmentRef.current, false);
+      setShowResult(false);
+      setResult(null);
+    }
+  };
+
+  const handleViewHistory = () => {
+    router.push("/assessments?tab=history");
+  };
+
+  if (completing) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4" />
+            <p className="text-gray-600">Calculating your results...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4" />
+            <p className="text-gray-600">Loading assessment...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showResult && result) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        {/* Offline result banner — shown when Supabase was unreachable */}
+        {isOfflineResult && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4"
+          >
+            <Alert className="border-amber-300 bg-amber-50">
+              <WifiOff className="h-4 w-4 text-amber-600" />
+              <AlertDescription className="text-amber-800 text-sm">
+                <span className="font-semibold">Saved locally</span> — your
+                result was calculated on your device and will automatically sync
+                to your account when your connection is restored. Your score is
+                accurate.
+              </AlertDescription>
+            </Alert>
+          </motion.div>
+        )}
+        <AssessmentResults
+          result={result}
+          onRetake={handleRetake}
+          onViewHistory={handleViewHistory}
+        />
+      </div>
+    );
+  }
+
+  if (!currentAssessment) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <Alert className="border-red-200 bg-red-50">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <AlertDescription className="text-red-800">
+            Unable to load assessment. Please try again.
+          </AlertDescription>
+        </Alert>
+        <Button
+          onClick={() => router.push("/profile?tab=assessments")}
+          className="mt-4"
+        >
+          Back to Assessments
+        </Button>
+      </div>
+    );
+  }
+
+  const config = ASSESSMENT_CONFIG[currentAssessment.assessment.type];
+  const currentQuestion =
+    currentAssessment.assessment.questions[
+      currentAssessment.currentQuestionIndex
+    ];
+  const selectedValue = currentAssessment.responses[currentQuestion.id];
+
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-8"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <Button
+            variant="ghost"
+            onClick={handleExit}
+            className="flex items-center gap-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Exit Assessment
+          </Button>
+
+          <div className="flex items-center gap-4 text-sm text-gray-600">
+            {saving && (
+              <span className="flex items-center gap-1 text-green-600">
+                <Save className="h-4 w-4 animate-pulse" />
+                Saving...
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Clock className="h-4 w-4" />~
+              {currentAssessment.assessment.time_estimate} min
+            </span>
+          </div>
+        </div>
+
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+            {config.displayName}
+          </h1>
+          <p className="text-gray-600">
+            {currentAssessment.assessment.description}
+          </p>
+        </div>
+      </motion.div>
+
+      {submitError && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <Alert className="bg-red-50 border-red-200">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-red-800">
+              {submitError}
+            </AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+
+      <AssessmentQuestionComponent
+        question={currentQuestion}
+        questionNumber={currentAssessment.currentQuestionIndex + 1}
+        totalQuestions={currentAssessment.assessment.questions.length}
+        selectedValue={selectedValue}
+        onAnswer={handleAnswer}
+        onNext={handleNext}
+        onPrevious={handlePrevious}
+        canGoNext={selectedValue !== undefined}
+        canGoPrevious={currentAssessment.currentQuestionIndex > 0}
+        isLastQuestion={
+          currentAssessment.currentQuestionIndex ===
+          currentAssessment.assessment.questions.length - 1
+        }
+        assessmentType={currentAssessment.assessment.type}
+      />
+
+      <div className="mt-8 text-center">
+        <p className="text-sm text-gray-500">
+          Your progress is saved automatically. You can exit and resume this
+          assessment later.
+        </p>
+      </div>
+
+      <SafetyInterstitialModal
+        open={showSafetyInterstitial}
+        onContinue={handleSafetyInterstitialContinue}
+        onStop={handleSafetyInterstitialStop}
+      />
+    </div>
+  );
+}

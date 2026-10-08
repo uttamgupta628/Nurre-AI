@@ -1,0 +1,17 @@
+{
+  "functions": {
+    "app/api/**": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/retention-cleanup",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/streak-reset",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

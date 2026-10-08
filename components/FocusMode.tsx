@@ -1,0 +1,471 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useCalibrationStore, LOOP_META } from "@/store/calibrationStore";
+import { apiEndFocusSession } from "@/lib/calibrationApi";
+import type { LoopState, CalibrationFlag } from "@/types/calibration";
+import type { MusicTrack } from "@/components/music/Player";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
+// Exact filenames as uploaded to focus-loops bucket
+const SOUNDSCAPE_FILES: Record<LoopState, string> = {
+  Reset: "Soundscape - Reset Mode_voicechange.mp3",
+  Start: "Soundscape - Start Mode.mp3",
+  "Deep Focus": "Soundscape - Deep Focus Mode - 3 min Loop.mp3",
+  Flow: "Soundscape - Flow Mode Mode - 3 min Loop.mp3",
+  Ground: "Soundscape - Ground Mode - 3 min Loop.mp3",
+};
+
+function resolveLoopUrl(loop: LoopState, flag: CalibrationFlag): string {
+  if (flag === "Deep Reset Mode" || flag === "Deep Reset Bridge") {
+    return `${SUPABASE_URL}/storage/v1/object/public/focus-loops/${encodeURIComponent("DEEP RESET SOUNDSCAPE 5 mins Breathing RESET + 10 mins Deep Focus + 5 mins Rest before LOOPING.mp3")}`;
+  }
+  const filename = SOUNDSCAPE_FILES[loop];
+  return `${SUPABASE_URL}/storage/v1/object/public/focus-loops/${encodeURIComponent(filename)}`;
+}
+
+export function FocusMode() {
+  const { outputs, focus_session_id, reset } = useCalibrationStore();
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(0.7);
+  const [elapsed, setElapsed] = useState(0);
+  const [ending, setEnding] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [preferredTrack, setPreferredTrack] = useState<MusicTrack | null>(null);
+  const [loadingTracks, setLoadingTracks] = useState(true);
+  const [matchedTracks, setMatchedTracks] = useState<MusicTrack[]>([]);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+  const pausedAtRef = useRef<number | null>(null); // timestamp when paused
+  const elapsedAtPauseRef = useRef<number>(0); // elapsed ms banked before pause
+
+  const loop = (outputs?.assigned_loop ?? "Start") as LoopState;
+  const flag = outputs?.flag ?? null;
+  const meta = LOOP_META[loop];
+  const loopColor = "#059669";
+  const isDeepReset = flag === "Deep Reset Mode" || flag === "Deep Reset Bridge";
+  const displayLoop = isDeepReset ? "Deep Reset Mode" : loop;
+  const loopUrl = preferredTrack ? preferredTrack.url : resolveLoopUrl(loop, flag);
+
+  useEffect(() => {
+    let active = true;
+    async function checkPreferences() {
+      try {
+        const res = await fetch("/api/music/tracks");
+        if (!res.ok) return;
+        const tracks: MusicTrack[] = await res.json();
+        if (!active) return;
+
+        // Find all tracks that match the current calibrated brain mode
+        const matched = tracks.filter(t => 
+          t.brain_modes && 
+          t.brain_modes.includes(loop)
+        );
+        setMatchedTracks(matched);
+
+        // Find liked tracks that match the current calibrated brain mode for default auto-assignment
+        const likedMatched = matched.filter(t => t.liked);
+        if (likedMatched.length > 0) {
+          // Select a random liked matched track by default
+          const randomTrack = likedMatched[Math.floor(Math.random() * likedMatched.length)];
+          setPreferredTrack(randomTrack);
+        }
+      } catch (err) {
+        console.error("Failed to load preferred focus tracks:", err);
+      } finally {
+        if (active) {
+          setLoadingTracks(false);
+        }
+      }
+    }
+    checkPreferences();
+    return () => {
+      active = false;
+    };
+  }, [loop]);
+
+  useEffect(() => {
+    if (loadingTracks) return;
+    setAudioError(null);
+
+    const audio = new Audio();
+    audio.loop = true;
+    audio.volume = volume;
+    audio.src = loopUrl;
+
+    audio.addEventListener("error", (e) => {
+      const err = (e.target as HTMLAudioElement).error;
+      if (!err || err.code === 4) return;
+      setAudioError(`Audio error ${err.code}: ${err.message}`);
+      setIsPlaying(false);
+    });
+
+    audioRef.current = audio;
+
+    audio
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        setAudioError(`Playback blocked: ${err.message}. Click play to start.`);
+        setIsPlaying(false);
+      });
+
+    startTimeRef.current = Date.now();
+    pausedAtRef.current = null;
+    elapsedAtPauseRef.current = 0;
+    timerRef.current = setInterval(() => {
+      setElapsed(
+        Math.floor(
+          (elapsedAtPauseRef.current + Date.now() - startTimeRef.current) /
+            1000,
+        ),
+      );
+    }, 1000);
+
+    return () => {
+      audio.pause();
+      audio.src = "";
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [loopUrl, loadingTracks]);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
+  function togglePlay() {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+      // Bank elapsed time so timer freezes at correct value
+      elapsedAtPauseRef.current += Date.now() - startTimeRef.current;
+      pausedAtRef.current = Date.now();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    } else {
+      setAudioError(null);
+      audio
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+          // Resume counting from where we left off
+          startTimeRef.current = Date.now();
+          timerRef.current = setInterval(() => {
+            setElapsed(
+              Math.floor(
+                (elapsedAtPauseRef.current +
+                  Date.now() -
+                  startTimeRef.current) /
+                  1000,
+              ),
+            );
+          }, 1000);
+        })
+        .catch((err) => {
+          setAudioError(`Could not resume: ${err.message}`);
+        });
+    }
+  }
+
+  async function handleEnd() {
+    setEnding(true);
+    audioRef.current?.pause();
+    if (timerRef.current) clearInterval(timerRef.current);
+    try {
+      if (focus_session_id) await apiEndFocusSession(focus_session_id);
+    } catch (err) {
+      console.error("[FocusMode] end session error:", err);
+    }
+    reset();
+  }
+
+  const formatTime = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0)
+      return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  return (
+    <div style={{ textAlign: "center", maxWidth: "480px", width: "100%" }}>
+      {/* Ambient orb */}
+      <div className="fade-up" style={{ marginBottom: "3rem" }}>
+        <FocusOrb color={loopColor} isPlaying={isPlaying} />
+      </div>
+
+      <p
+        className="nuree-label fade-up fade-up-delay-1"
+        style={{ marginBottom: "0.5rem" }}
+      >
+        Focus Mode
+      </p>
+      <h1
+        className="nuree-title fade-up fade-up-delay-1"
+        style={{ marginBottom: "0.5rem", color: loopColor }}
+      >
+        {preferredTrack ? `${displayLoop} · ${preferredTrack.title}` : displayLoop}
+      </h1>
+      <p
+        className="nuree-body fade-up fade-up-delay-2"
+        style={{ maxWidth: "300px", margin: "0 auto 2.5rem" }}
+      >
+        {meta.description}
+      </p>
+
+      {audioError && (
+        <p
+          style={{
+            fontSize: "0.8rem",
+            color: "#dc2626",
+            marginBottom: "1rem",
+            maxWidth: "320px",
+            margin: "0 auto 1rem",
+          }}
+        >
+          {audioError}
+        </p>
+      )}
+
+      {/* Timer */}
+      <div
+        className="fade-up fade-up-delay-2"
+        style={{ marginBottom: "2.5rem" }}
+      >
+        <p
+          style={{
+            fontFamily: "DM Mono, Courier New, monospace",
+            fontSize: "2.5rem",
+            color: "#111827",
+            letterSpacing: "0.1em",
+            fontWeight: 300,
+          }}
+        >
+          {formatTime(elapsed)}
+        </p>
+      </div>
+
+      {/* Controls */}
+      <div
+        className="fade-up fade-up-delay-3"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "1.5rem",
+        }}
+      >
+        {matchedTracks.length > 0 && (
+          <div style={{ width: "240px", marginBottom: "0.2rem" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.72rem",
+                color: "#6b7280",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                fontWeight: 600,
+                marginBottom: "0.35rem",
+                textAlign: "center"
+              }}
+            >
+              Select Soundscape
+            </label>
+            <select
+              value={preferredTrack ? preferredTrack.id : "default"}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "default") {
+                  setPreferredTrack(null);
+                } else {
+                  const track = matchedTracks.find((t) => t.id === val);
+                  if (track) setPreferredTrack(track);
+                }
+              }}
+              style={{
+                width: "100%",
+                padding: "0.6rem 0.8rem",
+                borderRadius: "8px",
+                border: "1px solid rgba(0, 0, 0, 0.08)",
+                background: "#ffffff",
+                fontSize: "0.85rem",
+                color: "#374151",
+                outline: "none",
+                cursor: "pointer",
+                textAlign: "center"
+              }}
+            >
+              <option value="default">Default {displayLoop} Loop</option>
+              {matchedTracks.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title} {t.liked ? "♥" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <button
+          onClick={togglePlay}
+          style={{
+            width: "64px",
+            height: "64px",
+            borderRadius: "50%",
+            background: loopColor,
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "transform 0.15s ease, box-shadow 0.15s ease",
+            boxShadow: "0 0 32px rgba(5,150,105,0.30)",
+          }}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.transform = "scale(1.05)")
+          }
+          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+        >
+          {isPlaying ? <PauseIcon /> : <PlayIcon />}
+        </button>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.75rem",
+            width: "240px",
+          }}
+        >
+          <VolumeIcon low />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            style={{ flex: 1, accentColor: loopColor }}
+          />
+          <VolumeIcon />
+        </div>
+
+        <button
+          className="nuree-btn nuree-btn-ghost"
+          onClick={handleEnd}
+          disabled={ending}
+          style={{ marginTop: "0.5rem" }}
+        >
+          {ending ? "Ending…" : "End Focus Session"}
+        </button>
+      </div>
+
+      <style>{`
+        @keyframes focusOrb  { 0% { transform: scale(1);    opacity: 0.6; } 50% { transform: scale(1.08); opacity: 0.9; } 100% { transform: scale(1); opacity: 0.6; } }
+        @keyframes focusRing { 0% { transform: scale(1);    opacity: 0.2; } 100% { transform: scale(1.6); opacity: 0; } }
+      `}</style>
+    </div>
+  );
+}
+
+function FocusOrb({ color, isPlaying }: { color: string; isPlaying: boolean }) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "180px",
+        height: "180px",
+        margin: "0 auto",
+      }}
+    >
+      {isPlaying &&
+        [0, 1, 2].map((i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "50%",
+              border: `1px solid ${color}`,
+              animation: "focusRing 3s ease-out infinite",
+              animationDelay: `${i * 1}s`,
+            }}
+          />
+        ))}
+      <div
+        style={{
+          position: "absolute",
+          inset: "20px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(5,150,105,0.25) 0%, rgba(5,150,105,0.06) 60%, transparent 100%)",
+          border: "1px solid rgba(5,150,105,0.4)",
+          animation: isPlaying ? "focusOrb 4s ease-in-out infinite" : "none",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          inset: "45px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(5,150,105,0.35) 0%, transparent 80%)",
+          filter: "blur(8px)",
+        }}
+      />
+    </div>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <path d="M7 4l12 7-12 7V4z" fill="#ffffff" />
+    </svg>
+  );
+}
+function PauseIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <rect x="5" y="4" width="4" height="14" rx="1.5" fill="#ffffff" />
+      <rect x="13" y="4" width="4" height="14" rx="1.5" fill="#ffffff" />
+    </svg>
+  );
+}
+function VolumeIcon({ low }: { low?: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      style={{ opacity: 0.4, flexShrink: 0 }}
+    >
+      <path
+        d="M3 6h2l3-3v10l-3-3H3V6z"
+        stroke="#111827"
+        strokeWidth="1.2"
+        fill="none"
+      />
+      {!low && (
+        <path
+          d="M11 4c1.5 1 2.5 2.5 2.5 4s-1 3-2.5 4"
+          stroke="#111827"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+          fill="none"
+        />
+      )}
+    </svg>
+  );
+}
