@@ -14,7 +14,7 @@ import { createServiceClient } from '@/lib/supabase/admin'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export const BRAIN_MODE_OPTIONS = ['Reset', 'Start', 'Deep Focus', 'Flow', 'Ground'] as const
+const BRAIN_MODE_OPTIONS = ['Reset', 'Start', 'Deep Focus', 'Flow', 'Ground'] as const
 const CATEGORIES = ['focus', 'calm', 'productivity', 'sleep'] as const
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
