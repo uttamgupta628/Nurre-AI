@@ -117,8 +117,26 @@ export function CalibrationPair() {
     }
 
     audioRef.current = audio;
-    audio.play().catch(() => {
-      setError("Could not play audio. Check browser audio permissions.");
+
+    // Clear any earlier error as soon as audio really starts
+    audio.addEventListener("playing", () => setError(null));
+
+    // A real load/decode failure (bad response, unsupported file)
+    audio.addEventListener("error", () => {
+      if (audioRef.current !== audio) return; // a newer clip replaced this one
+      setError("Could not load this sound. Please tap to try again.");
+    });
+
+    audio.play().catch((err: unknown) => {
+      // AbortError = this clip was replaced/paused by another tap or the
+      // auto-play of B; the new clip is playing, so this is not a failure.
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (audioRef.current !== audio) return;
+      if (err instanceof DOMException && err.name === "NotAllowedError") {
+        setError("Your browser blocked audio. Tap the sound again to play it.");
+        return;
+      }
+      setError("Could not play audio. Please tap to try again.");
     });
 
     setCurrentPlaying(track);
