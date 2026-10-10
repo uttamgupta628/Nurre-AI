@@ -131,6 +131,11 @@ export function getTrackUrl(trackId: string): string {
   return `${SUPABASE_URL}/storage/v1/object/public/calibration-tracks/${encoded}`;
 }
 
+/** Opaque-alias clip URL for the main calibrator (real file names stay server-side). */
+export function getClipUrl(alias: string): string {
+  return `/api/calibration/clip/${encodeURIComponent(alias)}`;
+}
+
 export function getLoopUrl(loopName: string): string {
   const slug = loopName.toLowerCase().replace(/\s+/g, "_");
   return `${SUPABASE_URL}/storage/v1/object/public/focus-loops/loop_${slug}.wav`;

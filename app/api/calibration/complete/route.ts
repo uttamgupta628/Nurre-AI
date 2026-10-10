@@ -11,6 +11,7 @@ import { getAuthUser, createAdminClient } from "@/lib/supabase/server";
 import { runCalibration } from "@/lib/scoringEngine";
 import { toPublicOutputs } from "@/lib/calibration/server-flow";
 import { rateLimit } from "@/lib/rateLimit";
+import { protectPath } from "@/lib/security/field-crypto";
 import type { CalibrationPairResponseRow } from "@/types/calibration";
 import type { PairBehaviourData } from "@/types/calibration";
 
@@ -114,7 +115,7 @@ export async function POST(request: Request) {
         brain_mode: outputs.brain_mode,
         flag: outputs.flag,
         assigned_loop: outputs.assigned_loop,
-        path: outputs.path,
+        path: protectPath(outputs.path),
         path_length: outputs.path_length,
         completed_at: new Date().toISOString(),
       })
@@ -128,7 +129,7 @@ export async function POST(request: Request) {
         brain_mode: outputs.brain_mode,
         flag: outputs.flag,
         assigned_loop: outputs.assigned_loop,
-        path: outputs.path,
+        path: protectPath(outputs.path),
         model_version: outputs.model_version,
         key_version: outputs.key_version,
         calibrated_at: new Date().toISOString(),

@@ -3,6 +3,7 @@
 // Separate from /api/calibration/complete which remains untouched.
 // Body: { session_id }
 
+import { toPublicOutputs } from "@/lib/calibration/server-flow";
 import { NextResponse } from "next/server";
 import { getAuthUser, createAdminClient } from "@/lib/supabase/server";
 import { runRandomCalibration } from "@/lib/randomScoringEngine";
@@ -114,7 +115,11 @@ export async function POST(request: Request) {
       { onConflict: "user_id" },
     );
 
-    return NextResponse.json({ session_id, outputs });
+    // Never send the path / model / key versions to the browser
+    return NextResponse.json(
+      { session_id, outputs: toPublicOutputs(outputs) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(

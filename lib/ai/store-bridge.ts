@@ -372,17 +372,25 @@ export class StoreBridge {
       const moodData = {
         user_id: this.userId,
         mood: params.mood,
-        energy: params.energy,
+        energy: Math.min(10, Math.max(1, Math.round(Number(params.energy)) || 5)),
         focus: params.focus || 5,
-        note: params.notes,
-        source: 'tool' as const
+        note: params.notes
       }
       
-      const { data, error } = await this.supabase
+      // 'source' values are constrained in the DB; use the same value as the
+      // UI path ('user') and retry without it if the column rejects it.
+      let { data, error } = await this.supabase
         .from('mood_entries')
-        .insert(moodData)
+        .insert({ ...moodData, source: 'user' })
         .select()
         .single()
+      if (error) {
+        ;({ data, error } = await this.supabase
+          .from('mood_entries')
+          .insert(moodData)
+          .select()
+          .single())
+      }
       
       if (error || !data) {
         return { 

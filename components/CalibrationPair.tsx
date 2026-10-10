@@ -5,7 +5,7 @@ import { useCalibrationStore } from "@/store/calibrationStore";
 import {
   apiSubmitPair,
   apiCompleteCalibrationWithRetry,
-  getTrackUrl,
+  getClipUrl,
 } from "@/lib/calibrationApi";
 import type { PairBehaviourData } from "@/types/calibration";
 import { useMusicPlayer } from "@/components/music/Player";
@@ -86,8 +86,8 @@ export function CalibrationPair() {
 
     const url =
       track === "A"
-        ? getTrackUrl(current_pair.track_a_id)
-        : getTrackUrl(current_pair.track_b_id);
+        ? getClipUrl(current_pair.track_a_id)
+        : getClipUrl(current_pair.track_b_id);
 
     if (!auto) {
       if (currentPlaying !== null && currentPlaying !== track) {

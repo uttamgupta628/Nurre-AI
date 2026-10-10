@@ -10,7 +10,8 @@ export const CHECKIN_PROMPT = "Shall we do a quick nervous system check-in?";
 export const QUICK_FOCUS_MINUTES = 15;
 
 export const CHECKIN_ROUTE = "/calibrate";
-export const QUICK_FOCUS_ROUTE = `/focus?duration=${QUICK_FOCUS_MINUTES}`;
+// autostart=1 → the focus page starts the timer immediately
+export const QUICK_FOCUS_ROUTE = `/focus?duration=${QUICK_FOCUS_MINUTES}&autostart=1`;
 
 const AFFIRMATIVE_RE =
   /^\s*(yes|yeah|yep|yup|sure|ok|okay|please|let'?s do it|let'?s go|go ahead|do it|y)[\s.!]*$/i;

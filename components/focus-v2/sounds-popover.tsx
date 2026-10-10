@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Volume2 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -88,10 +88,22 @@ export function SoundsPopover({ disabled = false, onSoundChange }: SoundsPopover
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Keep the latest player functions in refs so the effect below only runs
+  // when the user's CHOICE changes — not every time the playing track
+  // changes (that re-triggered playMusic and caused restarts/overlap).
+  const playMusicRef = useRef(playMusic)
+  const pauseMusicRef = useRef(pauseMusic)
+  const currentTrackRef = useRef(currentTrack)
+  playMusicRef.current = playMusic
+  pauseMusicRef.current = pauseMusic
+  currentTrackRef.current = currentTrack
+  const onSoundChangeRef = useRef(onSoundChange)
+  onSoundChangeRef.current = onSoundChange
+
   // Save sound changes and dispatch events
   useEffect(() => {
     window.localStorage.setItem('nuree:lastFocusSound', sound)
-    onSoundChange?.(sound)
+    onSoundChangeRef.current?.(sound)
 
     setLastFocusSound(sound === 'calibrated' ? 'none' : sound)
 
@@ -114,14 +126,14 @@ export function SoundsPopover({ disabled = false, onSoundChange }: SoundsPopover
           producer_name: 'Nuree AI',
           brain_modes: [loop]
         }
-        playMusic(trackToPlay).catch(err => {
+        playMusicRef.current(trackToPlay).catch(err => {
           console.error('Failed to play calibrated soundscape:', err)
         })
       }
     } else {
       // If we switched away from calibrated, pause the music
-      if (currentTrack?.id.startsWith('calibrated-')) {
-        pauseMusic()
+      if (currentTrackRef.current?.id.startsWith('calibrated-')) {
+        pauseMusicRef.current()
       }
 
       // Dispatch background noise control
@@ -130,7 +142,7 @@ export function SoundsPopover({ disabled = false, onSoundChange }: SoundsPopover
       })
       window.dispatchEvent(event)
     }
-  }, [sound, onSoundChange, setLastFocusSound, outputs, playMusic, pauseMusic, currentTrack])
+  }, [sound, setLastFocusSound, outputs?.assigned_loop, outputs?.flag])
 
   const currentLabel = useMemo(() => {
     if (sound === 'calibrated' && outputs) {

@@ -170,56 +170,73 @@ export const useMoodStore = create<MoodStore>((set, get) => ({
   logMoodFromTool: async (params) => {
     try {
       const supabase = createClient()
-      const user = useUserStore.getState().user
 
-      if (!user) {
-        return { entryId: '', success: false, error: 'No authenticated user' }
+      // Resolve the user robustly. The client user store can still be empty
+      // right after page load / on a fresh voice session, which used to make
+      // the AI answer "I can't log that". Fall back to the Supabase session.
+      let userId = useUserStore.getState().user?.id
+      if (!userId) {
+        const { data: { user: authUser } } = await supabase.auth.getUser()
+        userId = authUser?.id
       }
-      
-      // Create mood entry with new format
-      const moodData = {
-        user_id: user.id,
+      if (!userId) {
+        return { entryId: '', success: false, error: 'Please sign in to log your mood.' }
+      }
+
+      const energy = Math.min(10, Math.max(1, Math.round(Number(params.energy)) || 5))
+      const baseRow = {
+        user_id: userId,
         mood: params.mood,
-        energy: params.energy,
+        energy,
         focus: params.focus || 5,
         note: params.notes,
-        source: 'user' as const
       }
-      
-      const { data, error } = await supabase
+
+      // Try with source first; if the column/constraint rejects it, retry
+      // without so a schema difference can't block the log.
+      let { data, error } = await supabase
         .from('mood_entries')
-        .insert(moodData)
+        .insert({ ...baseRow, source: 'user' as const })
         .select()
         .single()
-      
+
+      if (error) {
+        console.warn('Mood insert with source failed, retrying without it:', error.message)
+        ;({ data, error } = await supabase
+          .from('mood_entries')
+          .insert(baseRow)
+          .select()
+          .single())
+      }
+
       if (error || !data) {
+        console.error('Tool mood logging failed:', error)
         return { entryId: '', success: false, error: error?.message || 'Failed to log mood' }
       }
-      
-      // Update local state
+
+      requestCache.delete(`moods-${userId}`)
       set(state => ({
         currentMood: data,
         recentMoods: [data, ...state.recentMoods].slice(0, 10)
       }))
-      
-      // Track mood event
-      await supabase.from('events').insert({
-        user_id: user.id,
-        type: 'mood_update',
-        data: { 
-          mood: data.mood,
-          energy: data.energy,
-          focus: data.focus,
-          source: 'tool'
-        }
-      })
-      
+
+      // Event tracking is best-effort — never fail the log because of it
+      try {
+        await supabase.from('events').insert({
+          user_id: userId,
+          type: 'mood_update',
+          data: { mood: data.mood, energy: data.energy, focus: data.focus, source: 'tool' }
+        })
+      } catch (e) {
+        console.warn('mood_update event failed:', e)
+      }
+
       return { entryId: data.id, success: true }
     } catch (error) {
       console.error('Tool mood logging failed:', error)
-      return { 
-        entryId: '', 
-        success: false, 
+      return {
+        entryId: '',
+        success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       }
     }

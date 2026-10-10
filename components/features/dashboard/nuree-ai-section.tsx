@@ -466,8 +466,8 @@ export function NureeAISection({
                             }}
                             transition={{ duration: 0.1 }}
                             style={{
-                              width: "clamp(160px, 18vw, 380px)",
-                              height: "clamp(160px, 18vw, 380px)",
+                              width: "clamp(150px, min(18vw, 32vh), 380px)",
+                              height: "clamp(150px, min(18vw, 32vh), 380px)",
                               left: "50%",
                               top: "50%",
                               transform: "translate(-50%, -50%)",
@@ -489,8 +489,8 @@ export function NureeAISection({
                               "opacity-50 cursor-not-allowed",
                           )}
                           style={{
-                            width: "clamp(160px, 18vw, 380px)",
-                            height: "clamp(160px, 18vw, 380px)",
+                            width: "clamp(150px, min(18vw, 32vh), 380px)",
+                            height: "clamp(150px, min(18vw, 32vh), 380px)",
                           }}
                           onClick={
                             micPermissionError
@@ -529,7 +529,7 @@ export function NureeAISection({
                 </div>
 
                 {/* Bottom - the two primary actions */}
-                <div className="flex-shrink-0 px-6 lg:px-8 xl:px-10 2xl:px-12 pb-4 xl:pb-5 2xl:pb-6 pt-3 xl:pt-4">
+                <div className="flex-shrink-0 px-6 lg:px-8 xl:px-10 2xl:px-12 pb-4 xl:pb-5 2xl:pb-6 pt-4 xl:pt-5 relative z-10">
                   <NureeHomeActions />
                 </div>
               </motion.div>

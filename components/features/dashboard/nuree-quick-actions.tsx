@@ -10,7 +10,7 @@ import {
 } from "@/hooks/use-nuree-actions";
 
 const BUTTON_CLASS =
-  "bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm lg:text-base xl:text-lg 2xl:text-xl lg:px-6 lg:py-3 xl:px-8 xl:py-4 lg:h-auto";
+  "bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm text-base lg:px-6 lg:py-3 lg:h-auto";
 
 /** Homepage: the two fixed shortcut buttons (replaces the old picker block). */
 export function NureeHomeActions({ className }: { className?: string }) {
@@ -23,7 +23,7 @@ export function NureeHomeActions({ className }: { className?: string }) {
       )}
     >
       <Button onClick={startCheckIn} className={BUTTON_CLASS}>
-        Quick <span aria-hidden>🧠</span>&nbsp;Check-In
+        Quick&nbsp;<span aria-hidden>🧠</span>&nbsp;Check-In
       </Button>
       <Button onClick={startQuickFocus} className={BUTTON_CLASS}>
         Start {QUICK_FOCUS_MINUTES}-Minute Focus

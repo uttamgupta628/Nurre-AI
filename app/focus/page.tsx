@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAIAssistantStore } from '@/store/ai-assistant-store'
 import { useSharedSession } from '@/hooks/use-shared-session'
 import { useSearchParams } from 'next/navigation'
@@ -18,6 +18,7 @@ export default function FocusPage() {
   const { sessionId } = useSharedSession()
   const searchParams = useSearchParams()
   const setDuration = useTimerStore(state => state.setDuration)
+  const autoStartedRef = useRef(false)
 
   useEffect(() => {
     setContext('focus')
@@ -32,6 +33,16 @@ export default function FocusPage() {
       const duration = parseInt(durationParam, 10)
       if (!isNaN(duration) && duration > 0) {
         setDuration(duration)
+
+        // ?autostart=1 (home "Start 15-Minute Focus"): begin right away,
+        // once, and only if a session isn't already running.
+        if (searchParams.get('autostart') === '1' && !autoStartedRef.current) {
+          autoStartedRef.current = true
+          const timer = useTimerStore.getState()
+          if (!timer.isRunning) {
+            timer.startTimer(duration).catch(err => console.error('Auto-start failed:', err))
+          }
+        }
       }
     }
 

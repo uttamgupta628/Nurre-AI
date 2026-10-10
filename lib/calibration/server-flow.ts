@@ -10,6 +10,7 @@
 //   • the final result               → toPublicOutputs()
 
 import { getNextNode } from "@/lib/scoringEngine";
+import { aliasFor } from "@/lib/calibration/clip-alias";
 import type {
   CalibrationOutputs,
   PublicCalibrationOutputs,
@@ -22,11 +23,15 @@ export const MAX_PAIRS = 4;
 /** Shortest path through the tree (pairs shown). */
 export const MIN_PAIRS = 3;
 
-/** Strip a tree node down to what the browser needs to play audio. */
+/**
+ * Strip a tree node down to what the browser needs to play audio.
+ * Clip ids are replaced with opaque aliases so file names (which contain
+ * mode names) never reach the browser.
+ */
 export function toPublicPair(node: TreeNode): PublicPair {
   return {
-    track_a_id: node.track_a_id,
-    track_b_id: node.track_b_id,
+    track_a_id: aliasFor(node.track_a_id),
+    track_b_id: aliasFor(node.track_b_id),
   };
 }
 
@@ -70,5 +75,9 @@ export function getNextPair(choices: Array<"A" | "B">): PublicPair | null {
 export function getExpectedPair(
   priorChoices: Array<"A" | "B">,
 ): PublicPair | null {
-  return getNextPair(priorChoices);
+  // RAW ids on purpose: used server-side only, to store the real track ids.
+  const node = getNextNode(priorChoices);
+  return node
+    ? { track_a_id: node.track_a_id, track_b_id: node.track_b_id }
+    : null;
 }

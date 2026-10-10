@@ -91,6 +91,13 @@ export function FocusMode() {
     if (loadingTracks) return;
     setAudioError(null);
 
+    // Only ONE soundscape may play at a time: stop the shared music player
+    // and any background noise before this component starts its own loop.
+    window.dispatchEvent(new CustomEvent("ai-music-stop"));
+    window.dispatchEvent(
+      new CustomEvent("background-noise-control", { detail: { type: null } }),
+    );
+
     const audio = new Audio();
     audio.loop = true;
     audio.volume = volume;
