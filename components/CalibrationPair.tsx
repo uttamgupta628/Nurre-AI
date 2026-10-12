@@ -45,6 +45,12 @@ export function CalibrationPair() {
   const [showFeedback, setShowFeedback] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Both clips of the current pair are downloaded as soon as the pair appears,
+  // so the first tap plays immediately instead of waiting for the download.
+  const preloadedRef = useRef<{
+    A: HTMLAudioElement | null;
+    B: HTMLAudioElement | null;
+  }>({ A: null, B: null });
   const startedAtRef = useRef<number>(Date.now());
   const autoPlayBRef = useRef(false);
 
@@ -66,6 +72,36 @@ export function CalibrationPair() {
       audioRef.current = null;
     }
   }, [current_pair]);
+
+  // Preload both clips of the current pair
+  const trackAId = current_pair?.track_a_id;
+  const trackBId = current_pair?.track_b_id;
+  useEffect(() => {
+    if (!trackAId || !trackBId) return;
+    const make = (id: string) => {
+      const a = new Audio();
+      a.preload = "auto";
+      a.src = getClipUrl(id);
+      a.load();
+      return a;
+    };
+    const pair = { A: make(trackAId), B: make(trackBId) };
+    preloadedRef.current = pair;
+    return () => {
+      for (const a of [pair.A, pair.B]) {
+        if (!a) continue;
+        a.pause();
+        a.onended = null;
+        a.onplaying = null;
+        a.onerror = null;
+        a.removeAttribute("src");
+        a.load();
+      }
+      if (preloadedRef.current === pair) {
+        preloadedRef.current = { A: null, B: null };
+      }
+    };
+  }, [trackAId, trackBId]);
 
   useEffect(() => {
     return () => {
@@ -103,29 +139,36 @@ export function CalibrationPair() {
       audioRef.current = null;
     }
 
-    const audio = new Audio(url);
+    // Reuse the preloaded element (instant start); fall back to a fresh one
+    const audio = preloadedRef.current[track] ?? new Audio(url);
     audio.volume = 0.85;
     audio.loop = false;
-
-    if (track === "A") {
-      audio.onended = () => {
-        if (!autoPlayBRef.current) {
-          autoPlayBRef.current = true;
-          playTrack("B", true);
-        }
-      };
+    try {
+      audio.currentTime = 0;
+    } catch {
+      // not seekable yet — it will start from the beginning anyway
     }
+
+    audio.onended =
+      track === "A"
+        ? () => {
+            if (!autoPlayBRef.current) {
+              autoPlayBRef.current = true;
+              playTrack("B", true);
+            }
+          }
+        : null;
 
     audioRef.current = audio;
 
     // Clear any earlier error as soon as audio really starts
-    audio.addEventListener("playing", () => setError(null));
+    audio.onplaying = () => setError(null);
 
     // A real load/decode failure (bad response, unsupported file)
-    audio.addEventListener("error", () => {
+    audio.onerror = () => {
       if (audioRef.current !== audio) return; // a newer clip replaced this one
       setError("Could not load this sound. Please tap to try again.");
-    });
+    };
 
     audio.play().catch((err: unknown) => {
       // AbortError = this clip was replaced/paused by another tap or the

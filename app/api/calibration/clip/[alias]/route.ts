@@ -10,6 +10,10 @@ import { resolveAlias } from "@/lib/calibration/clip-alias";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Signed URLs are valid for 60 s; reuse them for ~45 s so repeat/Range requests
+// skip the extra Supabase round-trip.
+const signedUrlCache = new Map<string, { url: string; exp: number }>();
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ alias: string }> },
@@ -26,17 +30,25 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const supabase = createServiceClient();
-    const { data, error } = await supabase.storage
-      .from("calibration-tracks")
-      .createSignedUrl(`${trackId}.wav`, 60);
-
-    if (error || !data?.signedUrl) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    let signedUrl: string;
+    const cached = signedUrlCache.get(alias);
+    if (cached && cached.exp > Date.now()) {
+      signedUrl = cached.url;
+    } else {
+      const supabase = createServiceClient();
+      const { data, error } = await supabase.storage
+        .from("calibration-tracks")
+        .createSignedUrl(`${trackId}.wav`, 60);
+      if (error || !data?.signedUrl) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      signedUrl = data.signedUrl;
+      if (signedUrlCache.size > 200) signedUrlCache.clear();
+      signedUrlCache.set(alias, { url: signedUrl, exp: Date.now() + 45_000 });
     }
 
     const range = req.headers.get("range");
-    const upstream = await fetch(data.signedUrl, {
+    const upstream = await fetch(signedUrl, {
       headers: range ? { Range: range } : undefined,
     });
     if (!upstream.ok && upstream.status !== 206) {
