@@ -20,7 +20,8 @@ class AvatarErrorBoundary extends Component<
     return { hasError: true, error: error.message }
   }
 
-  componentDidCatch() {
+  componentDidCatch(error: Error) {
+    console.error('[NureeAvatar] load/render error:', error?.message)
     this.props.onError?.()
   }
 
@@ -351,6 +352,10 @@ export function NureeAvatar({
   const [useFallback, setUseFallback] = useState(true)
   // Key to force remount of Canvas when switching fallback
   const [canvasKey, setCanvasKey] = useState(0)
+  // Retries: on phones the first GLB fetch / WebGL context can fail
+  // transiently; useGLTF caches the failed promise, so we must clear it.
+  const retriesRef = useRef(0)
+  const MAX_RETRIES = 3
 
   // Get the avatar URL for the selected personality
   const avatarUrl = useMemo(() => {
@@ -378,13 +383,13 @@ export function NureeAvatar({
         fallback={<AvatarError error="Failed to load 3D avatar" />}
         onError={() => {
           console.warn('[NureeAvatar] Avatar failed to load, attempting recovery...')
-          // If already on fallback and still failing, show error state
-          if (useFallback) {
-            setError('Avatar failed to load')
+          if (retriesRef.current < MAX_RETRIES) {
+            retriesRef.current += 1
+            // Drop the cached failure, then remount after a short delay
+            try { useGLTF.clear(avatarUrl) } catch {}
+            window.setTimeout(() => setCanvasKey(k => k + 1), 600 * retriesRef.current)
           } else {
-            // Switch to fallback and remount canvas
-            setUseFallback(true)
-            setCanvasKey(k => k + 1)
+            setError('Avatar failed to load')
           }
         }}
       >
@@ -396,15 +401,23 @@ export function NureeAvatar({
               near: 0.1,
               far: 1000
             }}
+            dpr={[1, 1.5]}
             gl={{
               antialias: true,
               alpha: true,
-              powerPreference: 'high-performance'
+              powerPreference: 'default'
             }}
             style={{ background: 'transparent', width: '100%', height: '100%' }}
             onCreated={(state) => {
               // Look straight at origin where face is
               state.camera.lookAt(0, 0, 0)
+              // iOS can drop the WebGL context (memory pressure / tab switch):
+              // remount instead of leaving a broken canvas.
+              const canvasEl = state.gl.domElement
+              canvasEl.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault()
+                window.setTimeout(() => setCanvasKey(k => k + 1), 300)
+              })
             }}
             onError={(e) => {
               console.error('[NureeAvatar] Canvas error:', e)
@@ -441,7 +454,9 @@ export function NureeAvatar({
 
 // Preload all self-hosted personality avatars for faster switching
 // Only preload local fallback URLs — remote URLs may be expired/invalid
-if (typeof window !== 'undefined') {
+// Skipped on phones/tablets: parsing four models at once uses a lot of
+// memory on iOS Safari and a failed preload is cached as a permanent error.
+if (typeof window !== 'undefined' && !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
   getPersonalityList().forEach(p => {
     useGLTF.preload(p.fallbackAvatarUrl)
   })

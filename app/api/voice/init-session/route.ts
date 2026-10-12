@@ -416,7 +416,13 @@ export async function POST(req: NextRequest) {
 
     // 7. Return session credentials to frontend
     const response: SessionResponse = {
-      firstMessage: CHECKIN_FIRST_MESSAGE,
+      // Only send the opener override when explicitly enabled. If the
+      // ElevenLabs agent does not allow the "First message" override, the
+      // connection can be dropped right after it opens (voice "glitch").
+      // Safe default: off — the prompt still makes the agent ask the
+      // check-in question as its first line.
+      firstMessage:
+        process.env.VOICE_FIRST_MESSAGE_OVERRIDE === 'true' ? CHECKIN_FIRST_MESSAGE : '',
       sessionId,
       signedUrl: signed_url,
       agentId: ELEVENLABS_AGENT_ID,
