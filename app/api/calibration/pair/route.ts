@@ -73,15 +73,25 @@ export async function POST(request: Request) {
 
     const supabase = createAdminClient();
 
-    // Verify session belongs to this user and is still open
-    const { data: session, error: sessionError } = await supabase
-      .from("calibration_sessions")
-      .select("id, status")
-      .eq("id", session_id)
-      .eq("user_id", user.id)
-      .single();
+    // Session check and stored path are independent → fetch in parallel
+    // (saves one full database round-trip on every pair).
+    const [sessionRes, existingRes] = await Promise.all([
+      supabase
+        .from("calibration_sessions")
+        .select("id, status")
+        .eq("id", session_id)
+        .eq("user_id", user.id)
+        .single(),
+      supabase
+        .from("calibration_pair_responses")
+        .select("pair_index, final_choice")
+        .eq("session_id", session_id)
+        .eq("user_id", user.id)
+        .order("pair_index", { ascending: true }),
+    ]);
 
-    if (sessionError || !session) {
+    const session = sessionRes.data;
+    if (sessionRes.error || !session) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
     if (session.status !== "in_progress") {
@@ -91,15 +101,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Rebuild the path so far from what is stored (not from the client)
-    const { data: existing, error: existingError } = await supabase
-      .from("calibration_pair_responses")
-      .select("pair_index, final_choice")
-      .eq("session_id", session_id)
-      .order("pair_index", { ascending: true });
-
-    if (existingError) {
-      console.error("[pair] fetch existing error:", existingError);
+    const existing = existingRes.data;
+    if (existingRes.error) {
+      console.error("[pair] fetch existing error:", existingRes.error);
       return NextResponse.json(
         { error: "Failed to record pair" },
         { status: 500 },
@@ -128,11 +132,14 @@ export async function POST(request: Request) {
 
     // Drop this index and anything after it (safe retry / re-submission),
     // so the stored path can never diverge from the tree.
-    await supabase
-      .from("calibration_pair_responses")
-      .delete()
-      .eq("session_id", session_id)
-      .gte("pair_index", pairIndex);
+    // Only needed on a retry/re-submission — skipped in the normal flow.
+    if ((existing ?? []).some((r) => r.pair_index >= pairIndex)) {
+      await supabase
+        .from("calibration_pair_responses")
+        .delete()
+        .eq("session_id", session_id)
+        .gte("pair_index", pairIndex);
+    }
 
     const { error: insertError } = await supabase
       .from("calibration_pair_responses")

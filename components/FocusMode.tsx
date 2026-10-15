@@ -35,6 +35,8 @@ export function FocusMode() {
   const [preferredTrack, setPreferredTrack] = useState<MusicTrack | null>(null);
   const [loadingTracks, setLoadingTracks] = useState(true);
   const [matchedTracks, setMatchedTracks] = useState<MusicTrack[]>([]);
+  // Soundscape file that belongs to this brain mode (looked up from storage)
+  const [defaultUrl, setDefaultUrl] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -48,33 +50,40 @@ export function FocusMode() {
   const loopColor = "#059669";
   const isDeepReset = flag === "Deep Reset Mode" || flag === "Deep Reset Bridge";
   const displayLoop = isDeepReset ? "Deep Reset Mode" : loop;
-  const loopUrl = preferredTrack ? preferredTrack.url : resolveLoopUrl(loop, flag);
+  const loopUrl = preferredTrack
+    ? preferredTrack.url
+    : (defaultUrl ?? resolveLoopUrl(loop, flag));
 
   useEffect(() => {
     let active = true;
     async function checkPreferences() {
       try {
-        const res = await fetch("/api/music/tracks");
-        if (!res.ok) return;
-        const tracks: MusicTrack[] = await res.json();
+        const modeKey = isDeepReset ? "Deep Reset" : loop;
+        const [tracksRes, defaultRes] = await Promise.all([
+          fetch("/api/music/tracks").catch(() => null),
+          fetch(`/api/focus/default-loop?mode=${encodeURIComponent(modeKey)}`).catch(
+            () => null,
+          ),
+        ]);
         if (!active) return;
 
-        // Find all tracks that match the current calibrated brain mode
-        const matched = tracks.filter(t => 
-          t.brain_modes && 
-          t.brain_modes.includes(loop)
-        );
-        setMatchedTracks(matched);
+        // The default is ALWAYS the soundscape made for this brain mode.
+        if (defaultRes?.ok) {
+          const { url } = await defaultRes.json();
+          if (active && typeof url === "string") setDefaultUrl(url);
+        }
 
-        // Find liked tracks that match the current calibrated brain mode for default auto-assignment
-        const likedMatched = matched.filter(t => t.liked);
-        if (likedMatched.length > 0) {
-          // Select a random liked matched track by default
-          const randomTrack = likedMatched[Math.floor(Math.random() * likedMatched.length)];
-          setPreferredTrack(randomTrack);
+        // Other tracks tagged for this mode are only offered in the dropdown;
+        // they never replace the default automatically.
+        if (tracksRes?.ok) {
+          const tracks: MusicTrack[] = await tracksRes.json();
+          if (!active) return;
+          setMatchedTracks(
+            tracks.filter((t) => t.brain_modes && t.brain_modes.includes(loop)),
+          );
         }
       } catch (err) {
-        console.error("Failed to load preferred focus tracks:", err);
+        console.error("Failed to load focus tracks:", err);
       } finally {
         if (active) {
           setLoadingTracks(false);
@@ -85,7 +94,7 @@ export function FocusMode() {
     return () => {
       active = false;
     };
-  }, [loop]);
+  }, [loop, isDeepReset]);
 
   useEffect(() => {
     if (loadingTracks) return;

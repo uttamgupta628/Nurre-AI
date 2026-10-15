@@ -214,13 +214,11 @@ export function CalibrationPair() {
     setStateA(track === "A" ? "selected" : "done");
     setStateB(track === "B" ? "selected" : "done");
     setShowFeedback(true);
-    setTimeout(() => {
-      setShowFeedback(false);
-      handleConfirm(track);
-    }, 1400);
+    // Submit right away; the feedback text is shown while the request runs
+    handleConfirm(track, Date.now());
   }
 
-  async function handleConfirm(choice: "A" | "B") {
+  async function handleConfirm(choice: "A" | "B", selectedAt: number = Date.now()) {
     if (!current_pair || !session_id || confirming) return;
     setConfirming(true);
     setError(null);
@@ -242,6 +240,7 @@ export function CalibrationPair() {
       submitted = await apiSubmitPair(session_id, pairData);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to submit";
+      setShowFeedback(false);
       setError(msg);
       setConfirming(false);
       setChosen(null);
@@ -249,6 +248,11 @@ export function CalibrationPair() {
       setStateB("idle");
       return;
     }
+
+    // Keep the feedback visible for a moment only if the server was faster
+    const wait = 800 - (Date.now() - selectedAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    setShowFeedback(false);
 
     // The server decides what comes next — the browser never walks the tree
     if (submitted.is_complete || !submitted.next_pair) {
