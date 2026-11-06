@@ -250,12 +250,12 @@ export default function LoginPage() {
           </div>
           
               <div className="space-y-3">
-                <div className="text-center text-sm text-gray-600">
+                {/* <div className="text-center text-sm text-gray-600">
                   Don&apos;t have an account?{' '}
                   <Link href="/signup" className="text-secondary-600 hover:text-secondary-700 hover:underline font-medium transition-colors">
                     Sign up
                   </Link>
-                </div>
+                </div> */}
                 
                 <details className="text-xs text-gray-600">
                   <summary className="cursor-pointer hover:text-gray-800 text-center transition-colors">
