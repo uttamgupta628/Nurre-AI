@@ -50,6 +50,10 @@ export default function LoginPage() {
     setMessage('')
     setShowResendEmail(false)
 
+    // Set when we hand off to a full page load, so the button keeps showing
+    // its loading state until the browser actually navigates away.
+    let navigating = false
+
     try {
       if (useMagicLink) {
         const result = await signInWithMagicLink(email)
@@ -71,6 +75,14 @@ export default function LoginPage() {
               result.error.includes('confirm your email')) {
             setShowResendEmail(true)
           }
+        } else if (result?.success && result.redirectTo) {
+          // Full page load (not router.push): the session cookie was set on the
+          // server, so the client user store / auth listener never saw the
+          // sign-in. A hard navigation rebuilds all client state from the new
+          // session, so Admin Console, Sign Out, points, tasks etc. are correct
+          // on first render.
+          navigating = true
+          window.location.assign(result.redirectTo)
         }
       }
     } catch (err) {
@@ -78,7 +90,9 @@ export default function LoginPage() {
       setMessage('Something went wrong. Please try again.')
       setMessageType('error')
     } finally {
-      setIsLoading(false)
+      if (!navigating) {
+        setIsLoading(false)
+      }
     }
   }
   

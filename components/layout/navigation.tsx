@@ -12,7 +12,6 @@ import { useState, useEffect } from 'react'
 import { signOut } from '@/lib/auth/actions'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useUser } from '@/lib/auth/client'
 import { useIsAdmin } from '@/lib/auth/hooks'
 import { useTimerStore } from '@/store/timer-store'
 import { useMusicPlayer } from '@/components/music/Player'
@@ -29,7 +28,6 @@ export function Navigation() {
   const router = useRouter()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(true)
-  const { user } = useUser()
   const { isAdmin } = useIsAdmin()
   const isRunning = useTimerStore((state) => state.isRunning)
   const { currentTrack } = useMusicPlayer()
@@ -259,37 +257,35 @@ export function Navigation() {
               )}
             </div>
             
-            {user && (
-              <div className="relative group">
-                <button
-                  onClick={handleSignOut}
-                  className={cn(
-                    "w-full flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors",
-                    isCollapsed ? "justify-center" : "space-x-3"
-                  )}
-                >
-                  <LogOut className="w-5 h-5 flex-shrink-0" />
-                  <AnimatePresence>
-                    {!isCollapsed && (
-                      <motion.span 
-                        initial={{ opacity: 0, width: 0 }}
-                        animate={{ opacity: 1, width: 'auto' }}
-                        exit={{ opacity: 0, width: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="font-medium overflow-hidden whitespace-nowrap"
-                      >
-                        Sign Out
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </button>
-                {isCollapsed && (
-                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                    Sign Out
-                  </div>
+            <div className="relative group">
+              <button
+                onClick={handleSignOut}
+                className={cn(
+                  "w-full flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors",
+                  isCollapsed ? "justify-center" : "space-x-3"
                 )}
-              </div>
-            )}
+              >
+                <LogOut className="w-5 h-5 flex-shrink-0" />
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.span 
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: 'auto' }}
+                      exit={{ opacity: 0, width: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="font-medium overflow-hidden whitespace-nowrap"
+                    >
+                      Sign Out
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </button>
+              {isCollapsed && (
+                <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                  Sign Out
+                </div>
+              )}
+            </div>
             
             {/* Collapse Toggle Button */}
             <button
@@ -404,15 +400,13 @@ export function Navigation() {
                     <Settings className="w-5 h-5" />
                     <span className="font-medium">Settings</span>
                   </Link>
-                  {user && (
-                    <button
-                      onClick={handleSignOut}
-                      className="w-full flex items-center space-x-3 px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-lg"
-                    >
-                      <LogOut className="w-5 h-5" />
-                      <span className="font-medium">Sign Out</span>
-                    </button>
-                  )}
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full flex items-center space-x-3 px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-lg"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    <span className="font-medium">Sign Out</span>
+                  </button>
                 </div>
               </div>
             </motion.div>

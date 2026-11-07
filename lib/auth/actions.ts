@@ -3,6 +3,13 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
+/** Result shape for signIn. The client performs the navigation (see login page). */
+type SignInResult = {
+  error?: string
+  success?: boolean
+  redirectTo?: string
+}
+
 /** Retry an async function with exponential backoff */
 async function withRetry<T>(
   fn: () => Promise<T>,
@@ -82,7 +89,15 @@ export async function signUp(email: string, password: string, name?: string) {
   }
 }
 
-export async function signIn(email: string, password: string) {
+/**
+ * Signs the user in on the server (sets the session cookie) and returns where
+ * to go next. It deliberately does NOT call redirect(): a server-side redirect
+ * is a soft client navigation, so the browser Supabase client never emits
+ * SIGNED_IN and the client user store keeps the signed-out state it had on
+ * /login. The login page performs a full page load to the returned path so
+ * every client store rebuilds from the new session.
+ */
+export async function signIn(email: string, password: string): Promise<SignInResult> {
   try {
     const supabase = await createClient()
 
@@ -97,6 +112,8 @@ export async function signIn(email: string, password: string) {
       return { error: error.message }
     }
 
+    let redirectTo = '/dashboard'
+
     if (data.user) {
       const { data: coachRow } = await supabase
         .from('coaches')
@@ -105,14 +122,12 @@ export async function signIn(email: string, password: string) {
         .maybeSingle()
 
       if (coachRow) {
-        redirect('/coach')
+        redirectTo = '/coach'
       }
     }
 
-    redirect('/dashboard')
+    return { success: true, redirectTo }
   } catch (err) {
-    // redirect() throws a special Next.js error — rethrow it
-    if (err && typeof err === 'object' && 'digest' in err) throw err
     console.error('[Auth] signIn failed:', err)
     return { error: 'Something went wrong. Please try again.' }
   }
